@@ -224,6 +224,18 @@ class Page(QWidget):
         super().__init__()
         self.session_factory = session_factory
 
+    def confirm(self, title: str, text: str) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                title,
+                text,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            == QMessageBox.Yes
+        )
+
     def message(self, title: str, text: str) -> None:
         QMessageBox.information(self, title, text)
 
@@ -286,28 +298,53 @@ class ProductsPage(Page):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(14)
 
+        heading = page_heading(
+            "MES / PRODUCT MASTER",
+            "產品管理",
+            "維護可投入工單的產品主檔。產品料號會自動轉成大寫，停用產品仍會保留歷史資料關聯。",
+        )
+        layout.addWidget(heading)
+
         form = panel()
         form_layout = QGridLayout(form)
+        form_layout.setContentsMargins(18, 18, 18, 18)
+        form_layout.setHorizontalSpacing(16)
+        form_layout.setVerticalSpacing(10)
         self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("例如：FG-001")
         self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("例如：測試成品")
         self.spec_input = QLineEdit()
+        self.spec_input.setPlaceholderText("選填")
         self.unit_input = QLineEdit("PCS")
+        self.unit_input.setPlaceholderText("PCS")
         self.active_input = QCheckBox("啟用")
         self.active_input.setChecked(True)
-        add_labeled(form_layout, 0, "產品料號", self.code_input)
-        add_labeled(form_layout, 1, "產品名稱", self.name_input)
-        add_labeled(form_layout, 2, "規格", self.spec_input)
-        add_labeled(form_layout, 3, "單位", self.unit_input)
-        form_layout.addWidget(self.active_input, 1, 3)
-        save_button = primary_button("儲存產品")
-        clear_button = secondary_button("清除")
-        delete_button = danger_button("刪除")
-        save_button.clicked.connect(self.save_product)
-        clear_button.clicked.connect(self.clear_form)
-        delete_button.clicked.connect(self.delete_product)
-        form_layout.addWidget(save_button, 2, 0)
-        form_layout.addWidget(clear_button, 2, 1)
-        form_layout.addWidget(delete_button, 2, 2)
+        add_inline_field(form_layout, 0, "產品料號", self.code_input)
+        add_inline_field(form_layout, 1, "產品名稱", self.name_input)
+        add_inline_field(form_layout, 2, "規格", self.spec_input)
+        add_inline_field(form_layout, 3, "單位", self.unit_input)
+        add_inline_field(form_layout, 4, "狀態", self.active_input)
+        form_layout.setColumnStretch(0, 1)
+        form_layout.setColumnStretch(1, 2)
+        form_layout.setColumnStretch(2, 2)
+        form_layout.setColumnStretch(3, 1)
+        form_layout.setColumnStretch(4, 1)
+
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(0, 10, 0, 0)
+        action_layout.setSpacing(10)
+        self.save_button = primary_button("儲存產品")
+        self.clear_button = secondary_button("清除表單")
+        self.delete_button = danger_button("刪除產品")
+        self.delete_button.setEnabled(False)
+        self.save_button.clicked.connect(self.save_product)
+        self.clear_button.clicked.connect(self.clear_form)
+        self.delete_button.clicked.connect(self.delete_product)
+        action_layout.addWidget(self.save_button, 1)
+        action_layout.addWidget(self.clear_button)
+        action_layout.addWidget(self.delete_button)
+        form_layout.addLayout(action_layout, 2, 0, 1, 5)
         layout.addWidget(form)
 
         self.table = make_table(["狀態", "料號", "名稱", "規格", "單位"])
@@ -342,12 +379,26 @@ class ProductsPage(Page):
         self.name_input.setText(self.table.item(row, 2).text())
         self.spec_input.setText(self.table.item(row, 3).text())
         self.unit_input.setText(self.table.item(row, 4).text())
+        self.save_button.setText("修改產品")
+        self.delete_button.setEnabled(True)
 
     def save_product(self) -> None:
+        is_update = self.selected_id is not None
+        action_label = "修改" if is_update else "新增"
+        product_code = self.code_input.text().strip().upper()
+        if not self.confirm(
+            f"確認{action_label}產品",
+            f"產品料號：{self.code_input.text().strip() or '未輸入'}\n"
+            f"產品名稱：{self.name_input.text().strip() or '未輸入'}\n"
+            f"狀態：{'啟用' if self.active_input.isChecked() else '停用'}\n\n"
+            f"是否要{action_label}這筆產品資料？",
+        ):
+            return
+
         try:
             with session_scope(self.session_factory) as session:
                 service = ProductService(session)
-                if self.selected_id:
+                if is_update and self.selected_id:
                     service.update_product(
                         self.selected_id,
                         self.code_input.text(),
@@ -364,29 +415,59 @@ class ProductsPage(Page):
                         self.unit_input.text(),
                         self.active_input.isChecked(),
                     )
-            self.clear_form()
+            self._reset_form()
             self.refresh()
+            self.message("操作完成", f"產品 {product_code} 已{action_label}")
         except DomainError as exc:
             self.error(exc)
 
     def delete_product(self) -> None:
         if not self.selected_id:
+            self.message("請先選擇資料", "請先在下方表格點選要刪除的產品。")
+            return
+        if not self.confirm(
+            "確認刪除產品",
+            f"產品料號：{self.code_input.text().strip()}\n"
+            f"產品名稱：{self.name_input.text().strip()}\n\n"
+            "此操作無法刪除已被工單使用的產品；若已有關聯資料，請改用停用。\n"
+            "是否確定刪除？",
+        ):
             return
         try:
+            code = self.code_input.text().strip().upper()
             with session_scope(self.session_factory) as session:
                 ProductService(session).delete_product(self.selected_id)
-            self.clear_form()
+            self._reset_form()
             self.refresh()
+            self.message("刪除完成", f"產品 {code} 已刪除")
         except DomainError as exc:
             self.error(exc)
 
     def clear_form(self) -> None:
+        has_content = any(
+            widget.text().strip()
+            for widget in [self.code_input, self.name_input, self.spec_input, self.unit_input]
+        )
+        if self.selected_id or has_content:
+            if not self.confirm("確認清除表單", "是否清除目前產品表單內容？"):
+                return
+            show_result = True
+        else:
+            show_result = False
+
+        self._reset_form()
+        if show_result:
+            self.message("表單已清除", "產品表單已回到新增模式。")
+
+    def _reset_form(self) -> None:
         self.selected_id = None
         for widget in [self.code_input, self.name_input, self.spec_input]:
             widget.clear()
         self.unit_input.setText("PCS")
         self.active_input.setChecked(True)
         self.table.clearSelection()
+        self.save_button.setText("儲存產品")
+        self.delete_button.setEnabled(False)
 
 
 class ResourcesPage(Page):
@@ -400,8 +481,11 @@ class ResourcesPage(Page):
         center_group = QGroupBox("工作中心")
         center_layout = QGridLayout(center_group)
         self.center_code = QLineEdit()
+        self.center_code.setPlaceholderText("例如：WC-001")
         self.center_name = QLineEdit()
+        self.center_name.setPlaceholderText("例如：組裝中心")
         self.center_desc = QLineEdit()
+        self.center_desc.setPlaceholderText("選填，例如：一樓組裝區")
         add_labeled(center_layout, 0, "代碼", self.center_code)
         add_labeled(center_layout, 1, "名稱", self.center_name)
         add_labeled(center_layout, 2, "說明", self.center_desc)
@@ -413,9 +497,13 @@ class ResourcesPage(Page):
         line_group = QGroupBox("產線")
         line_layout = QGridLayout(line_group)
         self.line_center = QComboBox()
+        self.line_center.setPlaceholderText("請選擇工作中心")
         self.line_code = QLineEdit()
+        self.line_code.setPlaceholderText("例如：LINE-01")
         self.line_name = QLineEdit()
+        self.line_name.setPlaceholderText("例如：A 線")
         self.line_capacity = QLineEdit()
+        self.line_capacity.setPlaceholderText("例如：1000")
         add_labeled(line_layout, 0, "工作中心", self.line_center)
         add_labeled(line_layout, 1, "產線代碼", self.line_code)
         add_labeled(line_layout, 2, "產線名稱", self.line_name)
@@ -492,14 +580,19 @@ class WorkOrdersPage(Page):
         form = panel()
         form_layout = QGridLayout(form)
         self.order_no = QLineEdit()
+        self.order_no.setPlaceholderText("例如：WO-001")
         self.product_select = QComboBox()
+        self.product_select.setPlaceholderText("請選擇產品")
         self.line_select = QComboBox()
+        self.line_select.setPlaceholderText("暫不指派")
         self.qty = QLineEdit()
+        self.qty.setPlaceholderText("例如：100")
         self.start_at = QLineEdit()
         self.end_at = QLineEdit()
         self.remark = QLineEdit()
         self.start_at.setPlaceholderText("YYYY-MM-DD HH:MM")
         self.end_at.setPlaceholderText("YYYY-MM-DD HH:MM")
+        self.remark.setPlaceholderText("選填")
         add_labeled(form_layout, 0, "工單號碼", self.order_no)
         add_labeled(form_layout, 1, "產品", self.product_select)
         add_labeled(form_layout, 2, "產線", self.line_select)
@@ -582,10 +675,15 @@ class ReportsPage(Page):
         form = panel()
         form_layout = QGridLayout(form)
         self.work_order_select = QComboBox()
+        self.work_order_select.setPlaceholderText("請選擇可報工工單")
         self.good_qty = QLineEdit()
+        self.good_qty.setPlaceholderText("例如：100")
         self.defect_qty = QLineEdit("0")
+        self.defect_qty.setPlaceholderText("例如：0")
         self.reporter = QLineEdit()
+        self.reporter.setPlaceholderText("例如：王小明")
         self.note = QLineEdit()
+        self.note.setPlaceholderText("選填")
         add_labeled(form_layout, 0, "工單", self.work_order_select)
         add_labeled(form_layout, 1, "良品數", self.good_qty)
         add_labeled(form_layout, 2, "不良數", self.defect_qty)
@@ -723,6 +821,33 @@ def danger_button(text: str) -> QPushButton:
     button = QPushButton(text)
     button.setObjectName("DangerButton")
     return button
+
+
+def page_heading(eyebrow_text: str, title_text: str, description: str) -> QFrame:
+    frame = panel()
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(20, 18, 20, 18)
+    layout.setSpacing(8)
+
+    eyebrow = QLabel(eyebrow_text)
+    eyebrow.setObjectName("Eyebrow")
+    title = QLabel(title_text)
+    title.setObjectName("SectionTitle")
+    copy = QLabel(description)
+    copy.setObjectName("Muted")
+    copy.setWordWrap(True)
+
+    layout.addWidget(eyebrow)
+    layout.addWidget(title)
+    layout.addWidget(copy)
+    return frame
+
+
+def add_inline_field(layout: QGridLayout, column: int, label: str, widget: QWidget) -> None:
+    label_widget = QLabel(label)
+    label_widget.setObjectName("FieldLabel")
+    layout.addWidget(label_widget, 0, column)
+    layout.addWidget(widget, 1, column)
 
 
 def add_labeled(layout: QGridLayout, row: int, label: str, widget: QWidget) -> None:
