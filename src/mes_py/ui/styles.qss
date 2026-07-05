@@ -1,6 +1,6 @@
 * {
   font-family: "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: 10pt;
 }
 
 QMainWindow, QDialog {
@@ -15,7 +15,7 @@ QFrame#Sidebar {
 
 QLabel#BrandTitle {
   color: #eef4f2;
-  font-size: 18px;
+  font-size: 13pt;
   font-weight: 800;
 }
 
@@ -25,26 +25,26 @@ QLabel#BrandSub, QLabel#Muted, QLabel#Eyebrow {
 
 QLabel#Eyebrow {
   color: #12d69a;
-  font-size: 11px;
+  font-size: 8pt;
   font-weight: 800;
   letter-spacing: 1px;
 }
 
 QLabel#PageTitle {
   color: #eef4f2;
-  font-size: 21px;
+  font-size: 16pt;
   font-weight: 800;
 }
 
 QLabel#SectionTitle {
   color: #eef4f2;
-  font-size: 24px;
+  font-size: 18pt;
   font-weight: 900;
 }
 
 QLabel#FieldLabel {
   color: #95a5a0;
-  font-size: 13px;
+  font-size: 10pt;
   font-weight: 800;
 }
 

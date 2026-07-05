@@ -5,11 +5,12 @@ from decimal import Decimal
 from importlib.resources import files
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, QDateTime, QTime, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
     QTableWidget,
@@ -946,14 +948,24 @@ class ResourcesPage(Page):
 
 
 class WorkOrdersPage(Page):
+    topbar_description = "建立與維護生產工單。新增工單只可選擇啟用產品；已有報工紀錄的工單不可刪除，請改用取消狀態保留追溯資料。"
+
     def __init__(self, session_factory: sessionmaker) -> None:
         super().__init__(session_factory)
+        self.selected_id: str | None = None
+        self._products: list[Product] = []
+        self._lines: list[Any] = []
+        self._work_order_by_id: dict[str, dict[str, Any]] = {}
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(14)
 
-        form = panel()
+        form = QGroupBox("工單")
         form_layout = QGridLayout(form)
+        form_layout.setContentsMargins(18, 22, 18, 18)
+        form_layout.setHorizontalSpacing(16)
+        form_layout.setVerticalSpacing(10)
         self.order_no = QLineEdit()
         self.order_no.setPlaceholderText("例如：WO-001")
         enable_uppercase_input(self.order_no)
@@ -963,66 +975,171 @@ class WorkOrdersPage(Page):
         self.line_select.setPlaceholderText("暫不指派")
         self.qty = QLineEdit()
         self.qty.setPlaceholderText("例如：100")
-        self.start_at = QLineEdit()
-        self.end_at = QLineEdit()
-        self.remark = QLineEdit()
-        self.start_at.setPlaceholderText("YYYY-MM-DD HH:MM")
-        self.end_at.setPlaceholderText("YYYY-MM-DD HH:MM")
+        self.start_at = optional_datetime_edit()
+        self.end_at = optional_datetime_edit()
+        self.remark = QPlainTextEdit()
         self.remark.setPlaceholderText("選填")
-        add_labeled(form_layout, 0, "工單號碼", self.order_no, required=True)
-        add_labeled(form_layout, 1, "產品", self.product_select, required=True)
-        add_labeled(form_layout, 2, "產線", self.line_select)
-        add_labeled(form_layout, 3, "預計數量", self.qty, required=True)
-        add_labeled(form_layout, 4, "預計開工", self.start_at)
-        add_labeled(form_layout, 5, "預計完工", self.end_at)
-        add_labeled(form_layout, 6, "備註", self.remark)
-        create_button = primary_button("新增工單")
-        create_button.clicked.connect(self.create_work_order)
-        form_layout.addWidget(create_button, 3, 0)
+        self.remark.setMaximumHeight(64)
+        add_grid_field(form_layout, 0, 0, "工單號碼", self.order_no, required=True)
+        add_grid_field(form_layout, 0, 1, "產品", self.product_select, required=True)
+        add_grid_field(form_layout, 0, 2, "生產產線", self.line_select)
+        add_grid_field(form_layout, 0, 3, "預計數量", self.qty, required=True)
+        add_grid_field(form_layout, 0, 4, "預計開工", self.start_at)
+        add_grid_field(form_layout, 0, 5, "預計完工", self.end_at)
+        remark_label = QLabel("備註")
+        remark_label.setObjectName("FieldLabel")
+        form_layout.addWidget(remark_label, 2, 0, 1, 6)
+        form_layout.addWidget(self.remark, 3, 0, 1, 6)
+        form_layout.setColumnStretch(0, 1)
+        form_layout.setColumnStretch(1, 2)
+        form_layout.setColumnStretch(2, 2)
+        form_layout.setColumnStretch(3, 1)
+        form_layout.setColumnStretch(4, 2)
+        form_layout.setColumnStretch(5, 2)
+
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(0, 14, 0, 0)
+        action_layout.setSpacing(10)
+        self.save_button = add_button("新增工單")
+        self.clear_button = clear_button("清除資料")
+        self.delete_button = danger_button("刪除工單")
+        self.delete_button.setEnabled(False)
+        self.save_button.clicked.connect(self.save_work_order)
+        self.clear_button.clicked.connect(self.clear_form)
+        self.delete_button.clicked.connect(self.delete_work_order)
+        action_layout.addWidget(self.save_button)
+        action_layout.addWidget(self.clear_button)
+        action_layout.addWidget(self.delete_button)
+        action_layout.addStretch(1)
+        form_layout.addLayout(action_layout, 4, 0, 1, 6)
         layout.addWidget(form)
 
-        self.table = make_table(["狀態", "工單", "產品", "產線", "預計數量", "良品", "預計期間"])
+        self.table = make_table(
+            [
+                "狀態",
+                "工單號碼",
+                "產品",
+                "生產產線",
+                "預計數量",
+                "預計期間",
+                "實際期間",
+                "報工筆數",
+                "備註",
+            ]
+        )
+        self.table.itemSelectionChanged.connect(self.load_selected)
         layout.addWidget(self.table, 1)
 
     def refresh(self) -> None:
         with session_scope(self.session_factory) as session:
-            products = ProductService(session).list_products()
-            lines = ProductionResourceService(session).list_production_lines(only_active=True)
+            self._products = ProductService(session).list_products()
+            self._lines = ProductionResourceService(session).list_production_lines()
             orders = WorkOrderService(session).list_work_orders()
+            self._work_order_by_id = {
+                order.id: {
+                    "order_no": order.order_no,
+                    "product_id": order.product_id,
+                    "line_id": order.production_line_id,
+                    "planned_qty": format_decimal(order.planned_qty),
+                    "status": order.status,
+                    "planned_start_at": order.planned_start_at,
+                    "planned_end_at": order.planned_end_at,
+                    "remark": order.remark or "",
+                    "report_count": len(order.reports),
+                }
+                for order in orders
+            }
 
-            self.product_select.clear()
-            for product in products:
-                if product.is_active:
-                    self.product_select.addItem(f"{product.code} - {product.name}", product.id)
-            self.line_select.clear()
-            self.line_select.addItem("暫不指派", None)
-            for line in lines:
+            current_product_id = self.product_select.currentData()
+            current_line_id = self.line_select.currentData()
+            if self.selected_id and self.selected_id in self._work_order_by_id:
+                selected_record = self._work_order_by_id[self.selected_id]
+                self.populate_product_options(True, selected_record["product_id"])
+                self.populate_line_options(True, selected_record["line_id"])
+            else:
+                self.populate_product_options(False, current_product_id)
+                self.populate_line_options(False, current_line_id)
+
+            self.table.blockSignals(True)
+            try:
+                fill_table(
+                    self.table,
+                    [
+                        [
+                            STATUS_LABELS[WorkOrderStatus(order.status)],
+                            order.order_no,
+                            f"{order.product.code} {order.product.name}",
+                            (
+                                f"{order.production_line.work_center.code} / {order.production_line.code}"
+                                if order.production_line
+                                else "未指派"
+                            ),
+                            format_decimal(order.planned_qty),
+                            f"{format_dt(order.planned_start_at)} ～ {format_dt(order.planned_end_at)}",
+                            f"{format_dt(order.started_at)} ～ {format_dt(order.completed_at)}",
+                            len(order.reports),
+                            order.remark or "",
+                        ]
+                        for order in orders
+                    ],
+                    [order.id for order in orders],
+                )
+                if self.selected_id is None:
+                    self.table.clearSelection()
+                elif self.selected_id not in self._work_order_by_id:
+                    self._reset_form()
+            finally:
+                self.table.blockSignals(False)
+
+    def populate_product_options(self, include_inactive: bool, selected_id: str | None = None) -> None:
+        self.product_select.clear()
+        for product in self._products:
+            if include_inactive or product.is_active:
+                suffix = "" if product.is_active else "（停用）"
+                self.product_select.addItem(f"{product.code} - {product.name}{suffix}", product.id)
+        if selected_id:
+            set_combo_current_data(self.product_select, selected_id)
+        elif self.product_select.count() and self.product_select.currentIndex() < 0:
+            self.product_select.setCurrentIndex(0)
+
+    def populate_line_options(self, include_inactive: bool, selected_id: str | None = None) -> None:
+        self.line_select.clear()
+        self.line_select.addItem("暫不指派", None)
+        for line in self._lines:
+            is_effective_active = line.is_active and line.work_center.is_active
+            if include_inactive or is_effective_active:
+                suffix = "" if is_effective_active else "（停用）"
                 self.line_select.addItem(
-                    f"{line.work_center.code} / {line.code} - {line.name}",
+                    f"{line.work_center.code} / {line.code} - {line.name}{suffix}",
                     line.id,
                 )
-            fill_table(
-                self.table,
-                [
-                    [
-                        STATUS_LABELS[WorkOrderStatus(order.status)],
-                        order.order_no,
-                        f"{order.product.code} {order.product.name}",
-                        (
-                            f"{order.production_line.work_center.code} / {order.production_line.code}"
-                            if order.production_line
-                            else "未指派"
-                        ),
-                        format_decimal(order.planned_qty),
-                        format_decimal(sum(report.good_qty for report in order.reports)),
-                        f"{format_dt(order.planned_start_at)} ～ {format_dt(order.planned_end_at)}",
-                    ]
-                    for order in orders
-                ],
-                [order.id for order in orders],
-            )
+        if selected_id:
+            set_combo_current_data(self.line_select, selected_id)
+        else:
+            self.line_select.setCurrentIndex(0)
 
-    def create_work_order(self) -> None:
+    def load_selected(self) -> None:
+        if not self.table.selectedItems():
+            return
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        work_order_id = self.table.item(row, 0).data(Qt.UserRole)
+        record = self._work_order_by_id.get(work_order_id)
+        if not record:
+            return
+        self.selected_id = work_order_id
+        self.populate_product_options(True, record["product_id"])
+        self.populate_line_options(True, record["line_id"])
+        self.order_no.setText(record["order_no"])
+        self.qty.setText(record["planned_qty"])
+        set_datetime_edit_value(self.start_at, record["planned_start_at"])
+        set_datetime_edit_value(self.end_at, record["planned_end_at"])
+        self.remark.setPlainText(record["remark"])
+        set_action_button(self.save_button, "edit", "修改工單")
+        self.delete_button.setEnabled(True)
+
+    def save_work_order(self) -> None:
         if not self.require_fields(
             [
                 ("工單號碼", self.order_no),
@@ -1031,41 +1148,101 @@ class WorkOrdersPage(Page):
             ]
         ):
             return
-        try:
-            planned_start_at = parse_datetime(self.start_at.text())
-            planned_end_at = parse_datetime(self.end_at.text())
-        except ValueError as exc:
-            self.error(exc)
-            return
+        is_update = self.selected_id is not None
+        action_label = "修改" if is_update else "新增"
         order_no = self.order_no.text().strip().upper()
+        planned_start_at = datetime_edit_value(self.start_at)
+        planned_end_at = datetime_edit_value(self.end_at)
+        record = self._work_order_by_id.get(self.selected_id) if self.selected_id else None
+        status = WorkOrderStatus(record["status"]) if record else WorkOrderStatus.PLANNED
         if not self.confirm(
-            "確認新增工單",
+            f"確認{action_label}工單",
             f"工單號碼：{self.order_no.text().strip()}\n"
             f"產品：{self.product_select.currentText()}\n"
             f"產線：{self.line_select.currentText() or '暫不指派'}\n"
             f"預計數量：{self.qty.text().strip()}\n"
             f"預計開工：{format_dt(planned_start_at)}\n"
             f"預計完工：{format_dt(planned_end_at)}\n\n"
-            "是否要新增這張工單？",
+            f"是否要{action_label}這張工單？",
         ):
             return
         try:
             with session_scope(self.session_factory) as session:
-                WorkOrderService(session).create_work_order(
-                    self.order_no.text(),
-                    self.product_select.currentData(),
-                    self.line_select.currentData(),
-                    self.qty.text(),
-                    planned_start_at,
-                    planned_end_at,
-                    self.remark.text(),
-                )
-            for widget in [self.order_no, self.qty, self.start_at, self.end_at, self.remark]:
-                widget.clear()
+                service = WorkOrderService(session)
+                if is_update and self.selected_id:
+                    service.update_work_order(
+                        self.selected_id,
+                        self.order_no.text(),
+                        self.product_select.currentData(),
+                        self.line_select.currentData(),
+                        self.qty.text(),
+                        status,
+                        planned_start_at,
+                        planned_end_at,
+                        self.remark.toPlainText(),
+                    )
+                else:
+                    service.create_work_order(
+                        self.order_no.text(),
+                        self.product_select.currentData(),
+                        self.line_select.currentData(),
+                        self.qty.text(),
+                        planned_start_at,
+                        planned_end_at,
+                        self.remark.toPlainText(),
+                    )
+            self._reset_form()
             self.refresh()
-            self.message("操作完成", f"工單 {order_no} 已新增")
+            self.message("操作完成", f"工單 {order_no} 已{action_label}")
         except DomainError as exc:
             self.error(exc)
+
+    def delete_work_order(self) -> None:
+        if not self.selected_id:
+            self.message("請先選擇資料", "請先在下方表格點選要刪除的工單。")
+            return
+        record = self._work_order_by_id.get(self.selected_id)
+        if record and record["report_count"]:
+            self.message("不可刪除工單", "此工單已有報工紀錄，請改用取消狀態保留追溯資料。")
+            return
+        order_no = self.order_no.text().strip().upper()
+        if not self.confirm(
+            "確認刪除工單",
+            f"工單號碼：{self.order_no.text().strip()}\n\n"
+            "此操作無法刪除已有報工紀錄的工單；若已有關聯資料，請改用取消狀態。\n"
+            "是否確定刪除？",
+        ):
+            return
+        try:
+            with session_scope(self.session_factory) as session:
+                WorkOrderService(session).delete_work_order(self.selected_id)
+            self._reset_form()
+            self.refresh()
+            self.message("刪除完成", f"工單 {order_no} 已刪除")
+        except DomainError as exc:
+            self.error(exc)
+
+    def clear_form(self) -> None:
+        self._reset_form()
+
+    def _reset_form(self) -> None:
+        self.selected_id = None
+        for widget in [self.order_no, self.qty, self.remark]:
+            widget.clear()
+        clear_datetime_edit(self.start_at)
+        clear_datetime_edit(self.end_at)
+        self.populate_product_options(False)
+        self.populate_line_options(False)
+        self.table.blockSignals(True)
+        try:
+            self.table.clearSelection()
+        finally:
+            self.table.blockSignals(False)
+        set_action_button(self.save_button, "add", "新增工單")
+        self.delete_button.setEnabled(False)
+
+    def create_work_order(self) -> None:
+        self.save_work_order()
 
 
 class ReportsPage(Page):
@@ -1331,6 +1508,22 @@ def add_labeled(
     layout.addWidget(widget, row // 3 * 2 + 1, row % 3)
 
 
+def add_grid_field(
+    layout: QGridLayout,
+    row: int,
+    column: int,
+    label: str,
+    widget: QWidget,
+    *,
+    required: bool = False,
+) -> None:
+    label_widget = QLabel(field_label_text(label, required))
+    label_widget.setObjectName("FieldLabel")
+    label_widget.setTextFormat(Qt.RichText)
+    layout.addWidget(label_widget, row, column)
+    layout.addWidget(widget, row + 1, column)
+
+
 def field_label_text(label: str, required: bool = False) -> str:
     if not required:
         return label
@@ -1376,6 +1569,40 @@ def set_combo_current_data(combo: QComboBox, value: Any) -> bool:
             combo.setCurrentIndex(index)
             return True
     return False
+
+
+def optional_datetime_min() -> QDateTime:
+    return QDateTime(QDate(1900, 1, 1), QTime(0, 0))
+
+
+def optional_datetime_edit() -> QDateTimeEdit:
+    edit = QDateTimeEdit()
+    edit.setDisplayFormat("yyyy/MM/dd HH:mm")
+    edit.setCalendarPopup(True)
+    edit.setMinimumDateTime(optional_datetime_min())
+    edit.setSpecialValueText("未設定")
+    edit.setDateTime(optional_datetime_min())
+    return edit
+
+
+def clear_datetime_edit(edit: QDateTimeEdit) -> None:
+    edit.setDateTime(optional_datetime_min())
+
+
+def set_datetime_edit_value(edit: QDateTimeEdit, value: datetime | None) -> None:
+    if value is None:
+        clear_datetime_edit(edit)
+        return
+    edit.setDateTime(QDateTime(QDate(value.year, value.month, value.day), QTime(value.hour, value.minute)))
+
+
+def datetime_edit_value(edit: QDateTimeEdit) -> datetime | None:
+    value = edit.dateTime()
+    if value <= optional_datetime_min():
+        return None
+    date = value.date()
+    time = value.time()
+    return datetime(date.year(), date.month(), date.day(), time.hour(), time.minute())
 
 
 def make_table(headers: list[str]) -> QTableWidget:
@@ -1449,4 +1676,10 @@ def format_decimal(value: Decimal | int | float | None) -> str:
 def format_dt(value: datetime | None) -> str:
     if value is None:
         return "未設定"
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
+def format_datetime_input(value: datetime | None) -> str:
+    if value is None:
+        return ""
     return value.strftime("%Y-%m-%d %H:%M")
