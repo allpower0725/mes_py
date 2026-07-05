@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mes-py"
+version = "0.1.0"
+description = "Python desktop MES system inspired by the chat_next FlowMES reference."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PySide6>=6.8",
+  "SQLAlchemy>=2.0",
+  "alembic>=1.14",
+  "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+build = [
+  "nuitka>=2.5",
+  "zstandard>=0.23",
+]
+
+[project.scripts]
+mes-py = "mes_py.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mes_py = ["ui/*.qss"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
