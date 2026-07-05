@@ -48,6 +48,9 @@ from mes_py.services.schedule_service import ScheduleService
 from mes_py.settings import Settings
 
 
+ACTION_BUTTON_WIDTH = 178
+
+
 def run_app(settings: Settings) -> int:
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("FlowMES Python")
@@ -224,6 +227,17 @@ class Page(QWidget):
         super().__init__()
         self.session_factory = session_factory
 
+    def require_fields(self, fields: list[tuple[str, QWidget]]) -> bool:
+        missing = missing_required_fields(fields)
+        if not missing:
+            return True
+        QMessageBox.warning(
+            self,
+            "資料不完整",
+            "請先補齊必填欄位：\n" + "\n".join(f"- {label}" for label in missing),
+        )
+        return False
+
     def confirm(self, title: str, text: str) -> bool:
         return (
             QMessageBox.question(
@@ -312,6 +326,7 @@ class ProductsPage(Page):
         form_layout.setVerticalSpacing(10)
         self.code_input = QLineEdit()
         self.code_input.setPlaceholderText("例如：FG-001")
+        self.code_input.textEdited.connect(lambda text: uppercase_line_edit_text(self.code_input, text))
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("例如：測試成品")
         self.spec_input = QLineEdit()
@@ -320,10 +335,10 @@ class ProductsPage(Page):
         self.unit_input.setPlaceholderText("PCS")
         self.active_input = QCheckBox("啟用")
         self.active_input.setChecked(True)
-        add_inline_field(form_layout, 0, "產品料號", self.code_input)
-        add_inline_field(form_layout, 1, "產品名稱", self.name_input)
+        add_inline_field(form_layout, 0, "產品料號", self.code_input, required=True)
+        add_inline_field(form_layout, 1, "產品名稱", self.name_input, required=True)
         add_inline_field(form_layout, 2, "規格", self.spec_input)
-        add_inline_field(form_layout, 3, "單位", self.unit_input)
+        add_inline_field(form_layout, 3, "單位", self.unit_input, required=True)
         add_inline_field(form_layout, 4, "狀態", self.active_input)
         form_layout.setColumnStretch(0, 1)
         form_layout.setColumnStretch(1, 2)
@@ -334,16 +349,17 @@ class ProductsPage(Page):
         action_layout = QHBoxLayout()
         action_layout.setContentsMargins(0, 10, 0, 0)
         action_layout.setSpacing(10)
-        self.save_button = primary_button("儲存產品")
-        self.clear_button = secondary_button("清除表單")
+        self.save_button = add_button("新增產品")
+        self.clear_button = clear_button("清除表單")
         self.delete_button = danger_button("刪除產品")
         self.delete_button.setEnabled(False)
         self.save_button.clicked.connect(self.save_product)
         self.clear_button.clicked.connect(self.clear_form)
         self.delete_button.clicked.connect(self.delete_product)
-        action_layout.addWidget(self.save_button, 1)
+        action_layout.addWidget(self.save_button)
         action_layout.addWidget(self.clear_button)
         action_layout.addWidget(self.delete_button)
+        action_layout.addStretch(1)
         form_layout.addLayout(action_layout, 2, 0, 1, 5)
         layout.addWidget(form)
 
@@ -354,22 +370,30 @@ class ProductsPage(Page):
     def refresh(self) -> None:
         with session_scope(self.session_factory) as session:
             products = ProductService(session).list_products()
-            fill_table(
-                self.table,
-                [
+            self.table.blockSignals(True)
+            try:
+                fill_table(
+                    self.table,
                     [
-                        "啟用" if item.is_active else "停用",
-                        item.code,
-                        item.name,
-                        item.spec or "",
-                        item.unit,
-                    ]
-                    for item in products
-                ],
-                [item.id for item in products],
-            )
+                        [
+                            "啟用" if item.is_active else "停用",
+                            item.code,
+                            item.name,
+                            item.spec or "",
+                            item.unit,
+                        ]
+                        for item in products
+                    ],
+                    [item.id for item in products],
+                )
+                if self.selected_id is None:
+                    self.table.clearSelection()
+            finally:
+                self.table.blockSignals(False)
 
     def load_selected(self) -> None:
+        if not self.table.selectedItems():
+            return
         row = self.table.currentRow()
         if row < 0:
             return
@@ -379,10 +403,18 @@ class ProductsPage(Page):
         self.name_input.setText(self.table.item(row, 2).text())
         self.spec_input.setText(self.table.item(row, 3).text())
         self.unit_input.setText(self.table.item(row, 4).text())
-        self.save_button.setText("修改產品")
+        set_action_button(self.save_button, "edit", "修改產品")
         self.delete_button.setEnabled(True)
 
     def save_product(self) -> None:
+        if not self.require_fields(
+            [
+                ("產品料號", self.code_input),
+                ("產品名稱", self.name_input),
+                ("單位", self.unit_input),
+            ]
+        ):
+            return
         is_update = self.selected_id is not None
         action_label = "修改" if is_update else "新增"
         product_code = self.code_input.text().strip().upper()
@@ -444,20 +476,7 @@ class ProductsPage(Page):
             self.error(exc)
 
     def clear_form(self) -> None:
-        has_content = any(
-            widget.text().strip()
-            for widget in [self.code_input, self.name_input, self.spec_input, self.unit_input]
-        )
-        if self.selected_id or has_content:
-            if not self.confirm("確認清除表單", "是否清除目前產品表單內容？"):
-                return
-            show_result = True
-        else:
-            show_result = False
-
         self._reset_form()
-        if show_result:
-            self.message("表單已清除", "產品表單已回到新增模式。")
 
     def _reset_form(self) -> None:
         self.selected_id = None
@@ -465,8 +484,12 @@ class ProductsPage(Page):
             widget.clear()
         self.unit_input.setText("PCS")
         self.active_input.setChecked(True)
-        self.table.clearSelection()
-        self.save_button.setText("儲存產品")
+        self.table.blockSignals(True)
+        try:
+            self.table.clearSelection()
+        finally:
+            self.table.blockSignals(False)
+        set_action_button(self.save_button, "add", "新增產品")
         self.delete_button.setEnabled(False)
 
 
@@ -486,8 +509,8 @@ class ResourcesPage(Page):
         self.center_name.setPlaceholderText("例如：組裝中心")
         self.center_desc = QLineEdit()
         self.center_desc.setPlaceholderText("選填，例如：一樓組裝區")
-        add_labeled(center_layout, 0, "代碼", self.center_code)
-        add_labeled(center_layout, 1, "名稱", self.center_name)
+        add_labeled(center_layout, 0, "代碼", self.center_code, required=True)
+        add_labeled(center_layout, 1, "名稱", self.center_name, required=True)
         add_labeled(center_layout, 2, "說明", self.center_desc)
         center_button = primary_button("新增工作中心")
         center_button.clicked.connect(self.create_center)
@@ -504,9 +527,9 @@ class ResourcesPage(Page):
         self.line_name.setPlaceholderText("例如：A 線")
         self.line_capacity = QLineEdit()
         self.line_capacity.setPlaceholderText("例如：1000")
-        add_labeled(line_layout, 0, "工作中心", self.line_center)
-        add_labeled(line_layout, 1, "產線代碼", self.line_code)
-        add_labeled(line_layout, 2, "產線名稱", self.line_name)
+        add_labeled(line_layout, 0, "工作中心", self.line_center, required=True)
+        add_labeled(line_layout, 1, "產線代碼", self.line_code, required=True)
+        add_labeled(line_layout, 2, "產線名稱", self.line_name, required=True)
         add_labeled(line_layout, 3, "每日產能", self.line_capacity)
         line_button = primary_button("新增產線")
         line_button.clicked.connect(self.create_line)
@@ -541,6 +564,21 @@ class ResourcesPage(Page):
             )
 
     def create_center(self) -> None:
+        if not self.require_fields(
+            [
+                ("工作中心代碼", self.center_code),
+                ("工作中心名稱", self.center_name),
+            ]
+        ):
+            return
+        center_code = self.center_code.text().strip().upper()
+        if not self.confirm(
+            "確認新增工作中心",
+            f"代碼：{self.center_code.text().strip()}\n"
+            f"名稱：{self.center_name.text().strip()}\n\n"
+            "是否要新增這筆工作中心資料？",
+        ):
+            return
         try:
             with session_scope(self.session_factory) as session:
                 ProductionResourceService(session).create_work_center(
@@ -550,10 +588,29 @@ class ResourcesPage(Page):
             self.center_name.clear()
             self.center_desc.clear()
             self.refresh()
+            self.message("操作完成", f"工作中心 {center_code} 已新增")
         except DomainError as exc:
             self.error(exc)
 
     def create_line(self) -> None:
+        if not self.require_fields(
+            [
+                ("工作中心", self.line_center),
+                ("產線代碼", self.line_code),
+                ("產線名稱", self.line_name),
+            ]
+        ):
+            return
+        line_code = self.line_code.text().strip().upper()
+        if not self.confirm(
+            "確認新增產線",
+            f"工作中心：{self.line_center.currentText()}\n"
+            f"產線代碼：{self.line_code.text().strip()}\n"
+            f"產線名稱：{self.line_name.text().strip()}\n"
+            f"每日產能：{self.line_capacity.text().strip() or '未設定'}\n\n"
+            "是否要新增這筆產線資料？",
+        ):
+            return
         try:
             with session_scope(self.session_factory) as session:
                 ProductionResourceService(session).create_production_line(
@@ -566,6 +623,7 @@ class ResourcesPage(Page):
             self.line_name.clear()
             self.line_capacity.clear()
             self.refresh()
+            self.message("操作完成", f"產線 {line_code} 已新增")
         except DomainError as exc:
             self.error(exc)
 
@@ -593,10 +651,10 @@ class WorkOrdersPage(Page):
         self.start_at.setPlaceholderText("YYYY-MM-DD HH:MM")
         self.end_at.setPlaceholderText("YYYY-MM-DD HH:MM")
         self.remark.setPlaceholderText("選填")
-        add_labeled(form_layout, 0, "工單號碼", self.order_no)
-        add_labeled(form_layout, 1, "產品", self.product_select)
+        add_labeled(form_layout, 0, "工單號碼", self.order_no, required=True)
+        add_labeled(form_layout, 1, "產品", self.product_select, required=True)
         add_labeled(form_layout, 2, "產線", self.line_select)
-        add_labeled(form_layout, 3, "預計數量", self.qty)
+        add_labeled(form_layout, 3, "預計數量", self.qty, required=True)
         add_labeled(form_layout, 4, "預計開工", self.start_at)
         add_labeled(form_layout, 5, "預計完工", self.end_at)
         add_labeled(form_layout, 6, "備註", self.remark)
@@ -647,6 +705,32 @@ class WorkOrdersPage(Page):
             )
 
     def create_work_order(self) -> None:
+        if not self.require_fields(
+            [
+                ("工單號碼", self.order_no),
+                ("產品", self.product_select),
+                ("預計數量", self.qty),
+            ]
+        ):
+            return
+        try:
+            planned_start_at = parse_datetime(self.start_at.text())
+            planned_end_at = parse_datetime(self.end_at.text())
+        except ValueError as exc:
+            self.error(exc)
+            return
+        order_no = self.order_no.text().strip().upper()
+        if not self.confirm(
+            "確認新增工單",
+            f"工單號碼：{self.order_no.text().strip()}\n"
+            f"產品：{self.product_select.currentText()}\n"
+            f"產線：{self.line_select.currentText() or '暫不指派'}\n"
+            f"預計數量：{self.qty.text().strip()}\n"
+            f"預計開工：{format_dt(planned_start_at)}\n"
+            f"預計完工：{format_dt(planned_end_at)}\n\n"
+            "是否要新增這張工單？",
+        ):
+            return
         try:
             with session_scope(self.session_factory) as session:
                 WorkOrderService(session).create_work_order(
@@ -654,14 +738,15 @@ class WorkOrdersPage(Page):
                     self.product_select.currentData(),
                     self.line_select.currentData(),
                     self.qty.text(),
-                    parse_datetime(self.start_at.text()),
-                    parse_datetime(self.end_at.text()),
+                    planned_start_at,
+                    planned_end_at,
                     self.remark.text(),
                 )
             for widget in [self.order_no, self.qty, self.start_at, self.end_at, self.remark]:
                 widget.clear()
             self.refresh()
-        except (DomainError, ValueError) as exc:
+            self.message("操作完成", f"工單 {order_no} 已新增")
+        except DomainError as exc:
             self.error(exc)
 
 
@@ -684,9 +769,9 @@ class ReportsPage(Page):
         self.reporter.setPlaceholderText("例如：王小明")
         self.note = QLineEdit()
         self.note.setPlaceholderText("選填")
-        add_labeled(form_layout, 0, "工單", self.work_order_select)
-        add_labeled(form_layout, 1, "良品數", self.good_qty)
-        add_labeled(form_layout, 2, "不良數", self.defect_qty)
+        add_labeled(form_layout, 0, "工單", self.work_order_select, required=True)
+        add_labeled(form_layout, 1, "良品數", self.good_qty, required=True)
+        add_labeled(form_layout, 2, "不良數", self.defect_qty, required=True)
         add_labeled(form_layout, 3, "報工人員", self.reporter)
         add_labeled(form_layout, 4, "備註", self.note)
         create_button = primary_button("新增報工")
@@ -722,6 +807,24 @@ class ReportsPage(Page):
             )
 
     def create_report(self) -> None:
+        if not self.require_fields(
+            [
+                ("工單", self.work_order_select),
+                ("良品數", self.good_qty),
+                ("不良數", self.defect_qty),
+            ]
+        ):
+            return
+        order_text = self.work_order_select.currentText()
+        if not self.confirm(
+            "確認新增報工",
+            f"工單：{order_text}\n"
+            f"良品數：{self.good_qty.text().strip()}\n"
+            f"不良數：{self.defect_qty.text().strip()}\n"
+            f"報工人員：{self.reporter.text().strip() or '未填寫'}\n\n"
+            "是否要新增這筆報工資料？",
+        ):
+            return
         try:
             with session_scope(self.session_factory) as session:
                 ProductionReportService(session).create_report(
@@ -736,6 +839,7 @@ class ReportsPage(Page):
             self.reporter.clear()
             self.note.clear()
             self.refresh()
+            self.message("操作完成", f"{order_text} 已新增報工")
         except DomainError as exc:
             self.error(exc)
 
@@ -805,21 +909,56 @@ def panel() -> QFrame:
     return frame
 
 
-def primary_button(text: str) -> QPushButton:
-    button = QPushButton(text)
-    button.setObjectName("PrimaryButton")
+def set_action_button(button: QPushButton, role: str, text: str) -> None:
+    icons = {
+        "add": "＋",
+        "edit": "✎",
+        "delete": "✕",
+        "clear": "",
+    }
+    object_names = {
+        "add": "AddButton",
+        "edit": "EditButton",
+        "delete": "DeleteButton",
+        "clear": "ClearButton",
+    }
+    icon = icons[role]
+    button.setText(f"{icon} {text}" if icon else text)
+    button.setObjectName(object_names[role])
+    button.setFixedWidth(ACTION_BUTTON_WIDTH)
+    button.style().unpolish(button)
+    button.style().polish(button)
+
+
+def add_button(text: str) -> QPushButton:
+    button = QPushButton()
+    set_action_button(button, "add", text)
     return button
+
+
+def edit_button(text: str) -> QPushButton:
+    button = QPushButton()
+    set_action_button(button, "edit", text)
+    return button
+
+
+def clear_button(text: str) -> QPushButton:
+    button = QPushButton()
+    set_action_button(button, "clear", text)
+    return button
+
+
+def primary_button(text: str) -> QPushButton:
+    return add_button(text)
 
 
 def secondary_button(text: str) -> QPushButton:
-    button = QPushButton(text)
-    button.setObjectName("SecondaryButton")
-    return button
+    return clear_button(text)
 
 
 def danger_button(text: str) -> QPushButton:
-    button = QPushButton(text)
-    button.setObjectName("DangerButton")
+    button = QPushButton()
+    set_action_button(button, "delete", text)
     return button
 
 
@@ -843,18 +982,69 @@ def page_heading(eyebrow_text: str, title_text: str, description: str) -> QFrame
     return frame
 
 
-def add_inline_field(layout: QGridLayout, column: int, label: str, widget: QWidget) -> None:
-    label_widget = QLabel(label)
+def add_inline_field(
+    layout: QGridLayout,
+    column: int,
+    label: str,
+    widget: QWidget,
+    *,
+    required: bool = False,
+) -> None:
+    label_widget = QLabel(field_label_text(label, required))
     label_widget.setObjectName("FieldLabel")
+    label_widget.setTextFormat(Qt.RichText)
     layout.addWidget(label_widget, 0, column)
     layout.addWidget(widget, 1, column)
 
 
-def add_labeled(layout: QGridLayout, row: int, label: str, widget: QWidget) -> None:
-    label_widget = QLabel(label)
+def add_labeled(
+    layout: QGridLayout,
+    row: int,
+    label: str,
+    widget: QWidget,
+    *,
+    required: bool = False,
+) -> None:
+    label_widget = QLabel(field_label_text(label, required))
     label_widget.setObjectName("Muted")
+    label_widget.setTextFormat(Qt.RichText)
     layout.addWidget(label_widget, row // 3 * 2, row % 3)
     layout.addWidget(widget, row // 3 * 2 + 1, row % 3)
+
+
+def field_label_text(label: str, required: bool = False) -> str:
+    if not required:
+        return label
+    return f"{label} <span style='color:#ff5c6c; font-weight:900;'>*</span>"
+
+
+def missing_required_fields(fields: list[tuple[str, QWidget]]) -> list[str]:
+    missing: list[str] = []
+    for label, widget in fields:
+        if isinstance(widget, QLineEdit):
+            has_value = bool(widget.text().strip())
+        elif isinstance(widget, QComboBox):
+            has_value = widget.currentIndex() >= 0 and widget.currentData() is not None
+        elif isinstance(widget, QCheckBox):
+            has_value = widget.isChecked()
+        else:
+            has_value = True
+        if not has_value:
+            missing.append(label)
+    return missing
+
+
+def uppercase_line_edit_text(line_edit: QLineEdit, text: str) -> None:
+    upper_text = text.upper()
+    if text == upper_text:
+        return
+    cursor_position = line_edit.cursorPosition()
+    line_edit.blockSignals(True)
+    try:
+        line_edit.setText(upper_text)
+        line_edit.setCursorPosition(cursor_position)
+    finally:
+        line_edit.blockSignals(False)
 
 
 def make_table(headers: list[str]) -> QTableWidget:

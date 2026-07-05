@@ -69,7 +69,8 @@ QPushButton#NavButton:hover, QPushButton#NavButton:checked {
   background: #0b2922;
 }
 
-QPushButton#PrimaryButton {
+QPushButton#PrimaryButton,
+QPushButton#AddButton {
   min-height: 44px;
   padding: 9px 18px;
   border: 1px solid #18e0aa;
@@ -83,7 +84,8 @@ QPushButton#PrimaryButton {
   font-weight: 800;
 }
 
-QPushButton#PrimaryButton:hover {
+QPushButton#PrimaryButton:hover,
+QPushButton#AddButton:hover {
   border-color: #5ff0ca;
   background: qlineargradient(
     x1: 0, y1: 0, x2: 1, y2: 1,
@@ -92,45 +94,99 @@ QPushButton#PrimaryButton:hover {
   );
 }
 
-QPushButton#PrimaryButton:pressed {
+QPushButton#PrimaryButton:pressed,
+QPushButton#AddButton:pressed {
   background: #076b53;
 }
 
-QPushButton#SecondaryButton {
+QPushButton#EditButton {
   min-height: 42px;
   padding: 9px 16px;
-  border: 1px solid #42535a;
-  border-radius: 8px;
-  background: #162227;
-  color: #d1ddda;
+  border: 1px solid #51b8ff;
+  border-radius: 9px;
+  background: qlineargradient(
+    x1: 0, y1: 0, x2: 1, y2: 1,
+    stop: 0 #268ed5,
+    stop: 1 #14598f
+  );
+  color: #f0f9ff;
   font-weight: 800;
 }
 
-QPushButton#SecondaryButton:hover {
-  border-color: #6c7f86;
-  background: #1b2a30;
-  color: #f1f8f6;
+QPushButton#EditButton:hover {
+  border-color: #8bd1ff;
+  background: qlineargradient(
+    x1: 0, y1: 0, x2: 1, y2: 1,
+    stop: 0 #319ee9,
+    stop: 1 #176cad
+  );
 }
 
-QPushButton#DangerButton {
+QPushButton#EditButton:pressed {
+  background: #124e7e;
+}
+
+QPushButton#SecondaryButton,
+QPushButton#ClearButton {
+  min-height: 42px;
+  padding: 9px 16px;
+  border: 1px solid #d6e3df;
+  border-radius: 9px;
+  background: #f2f7f5;
+  color: #102126;
+  font-weight: 800;
+}
+
+QPushButton#SecondaryButton:hover,
+QPushButton#ClearButton:hover {
+  border-color: #ffffff;
+  background: #ffffff;
+  color: #071114;
+}
+
+QPushButton#SecondaryButton:pressed,
+QPushButton#ClearButton:pressed {
+  background: #dfe8e5;
+}
+
+QPushButton#DangerButton,
+QPushButton#DeleteButton {
   min-height: 42px;
   padding: 9px 16px;
   border: 1px solid #a64a51;
-  border-radius: 8px;
-  background: #3a171b;
-  color: #ffb5ba;
+  border-radius: 9px;
+  background: qlineargradient(
+    x1: 0, y1: 0, x2: 1, y2: 1,
+    stop: 0 #c9444f,
+    stop: 1 #7b1f29
+  );
+  color: #fff3f4;
   font-weight: 800;
 }
 
-QPushButton#DangerButton:hover {
+QPushButton#DangerButton:hover,
+QPushButton#DeleteButton:hover {
   border-color: #e36a73;
-  background: #551f25;
+  background: qlineargradient(
+    x1: 0, y1: 0, x2: 1, y2: 1,
+    stop: 0 #df5963,
+    stop: 1 #9b2b36
+  );
   color: #ffe4e6;
 }
 
+QPushButton#DangerButton:pressed,
+QPushButton#DeleteButton:pressed {
+  background: #681923;
+}
+
 QPushButton#PrimaryButton:disabled,
+QPushButton#AddButton:disabled,
+QPushButton#EditButton:disabled,
 QPushButton#SecondaryButton:disabled,
-QPushButton#DangerButton:disabled {
+QPushButton#ClearButton:disabled,
+QPushButton#DangerButton:disabled,
+QPushButton#DeleteButton:disabled {
   border-color: #263238;
   background: #11191d;
   color: #53636a;
