@@ -71,10 +71,10 @@ QPushButton#NavButton:hover, QPushButton#NavButton:checked {
 
 QPushButton#PrimaryButton,
 QPushButton#AddButton {
-  min-height: 44px;
-  padding: 9px 18px;
+  min-height: 30px;
+  padding: 4px 14px;
   border: 1px solid #18e0aa;
-  border-radius: 9px;
+  border-radius: 7px;
   background: qlineargradient(
     x1: 0, y1: 0, x2: 1, y2: 1,
     stop: 0 #12b88c,
@@ -100,10 +100,10 @@ QPushButton#AddButton:pressed {
 }
 
 QPushButton#EditButton {
-  min-height: 42px;
-  padding: 9px 16px;
+  min-height: 30px;
+  padding: 4px 14px;
   border: 1px solid #51b8ff;
-  border-radius: 9px;
+  border-radius: 7px;
   background: qlineargradient(
     x1: 0, y1: 0, x2: 1, y2: 1,
     stop: 0 #268ed5,
@@ -128,10 +128,10 @@ QPushButton#EditButton:pressed {
 
 QPushButton#SecondaryButton,
 QPushButton#ClearButton {
-  min-height: 42px;
-  padding: 9px 16px;
+  min-height: 30px;
+  padding: 4px 14px;
   border: 1px solid #d6e3df;
-  border-radius: 9px;
+  border-radius: 7px;
   background: #f2f7f5;
   color: #102126;
   font-weight: 800;
@@ -151,10 +151,10 @@ QPushButton#ClearButton:pressed {
 
 QPushButton#DangerButton,
 QPushButton#DeleteButton {
-  min-height: 42px;
-  padding: 9px 16px;
+  min-height: 30px;
+  padding: 4px 14px;
   border: 1px solid #a64a51;
-  border-radius: 9px;
+  border-radius: 7px;
   background: qlineargradient(
     x1: 0, y1: 0, x2: 1, y2: 1,
     stop: 0 #c9444f,

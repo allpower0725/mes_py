@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from mes_py.domain.errors import DomainError
-from mes_py.domain.models import ProductionLine, WorkCenter
+from mes_py.domain.models import ProductionLine, WorkCenter, WorkOrder
 from mes_py.services.utils import normalize_code, optional_text, positive_decimal, require_text
 
 
@@ -74,6 +74,20 @@ class ProductionResourceService:
         self.session.flush()
         return center
 
+    def delete_work_center(self, center_id: str) -> None:
+        center = self.session.get(WorkCenter, center_id)
+        if not center:
+            raise DomainError("找不到工作中心")
+        line_count = self.session.scalar(
+            select(func.count())
+            .select_from(ProductionLine)
+            .where(ProductionLine.work_center_id == center_id)
+        )
+        if line_count:
+            raise DomainError("此工作中心已有產線，無法刪除，請先刪除或移轉產線，或改用停用")
+        self.session.delete(center)
+        self.session.flush()
+
     def create_production_line(
         self,
         work_center_id: str,
@@ -132,3 +146,14 @@ class ProductionResourceService:
         self.session.flush()
         return line
 
+    def delete_production_line(self, line_id: str) -> None:
+        line = self.session.get(ProductionLine, line_id)
+        if not line:
+            raise DomainError("找不到產線")
+        work_order_count = self.session.scalar(
+            select(func.count()).select_from(WorkOrder).where(WorkOrder.production_line_id == line_id)
+        )
+        if work_order_count:
+            raise DomainError("此產線已有工單，無法刪除，請改用停用以保留歷史關聯")
+        self.session.delete(line)
+        self.session.flush()
